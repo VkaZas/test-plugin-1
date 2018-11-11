@@ -1,5 +1,6 @@
 import com.google.gson.Gson;
-import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.actionSystem.AnAction;
+import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -8,99 +9,116 @@ import com.intellij.psi.search.FilenameIndex;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.searches.ReferencesSearch;
 import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.NameValuePair;
 import org.apache.commons.httpclient.methods.PostMethod;
-import org.apache.commons.httpclient.util.HttpURLConnection;
 
-import java.io.DataOutputStream;
-import java.net.URL;
 import java.util.*;
 import java.util.stream.Collectors;
 
 
 public class HelloAction extends AnAction {
+    private static final String DEPENDENCY_ROUTE = "http://127.0.0.1:3001/graph";
+    private static final String JAVA_EXT = "java";
+
     public HelloAction() {
-        super("Hello");
+        super("CodeBubble IDEA");
     }
 
     public void actionPerformed(AnActionEvent event) {
-//        Project project = event.getProject();
-//        Messages.showMessageDialog(project, "Hello world!", "Greeting", Messages.getInformationIcon());
+        // Mappings from PsiFile to PsiClasses that it owns
+        Map<PsiFile, Set<PsiClass>> fileOwnershipMap = new HashMap<>();
+        Map<String, Set<String>> fileOwnershipNameMap = new HashMap<>();
+        // Mappings from PsiClass to PsiMethods that it owns
+        Map<PsiClass, Set<PsiMethod>> classOwnershipMap = new HashMap<>();
+        Map<String, Set<String>> classOwnershipNameMap = new HashMap<>();
+        // A dependency graph from declarations to references of PsiClasses represented in PsiFiles with invocation statistics
+        Map<PsiFile, Map<PsiFile, Integer>> fileDependencyGraph = new HashMap<>();
+        Map<String, Map<String, Integer>> fileDependencyNameGraph = new HashMap<>();
 
+        // Get PisProject
         Project project = ProjectManager.getInstance().getOpenProjects()[0];
-        System.out.println(project);
+        // Filter out VirtualFiles without .java extension postfix
+        Collection<VirtualFile> virtualFiles = FilenameIndex.getAllFilesByExt(project, JAVA_EXT, GlobalSearchScope.projectScope(project));
 
-        Collection<VirtualFile> virtualFiles = FilenameIndex.getAllFilesByExt(project, "java", GlobalSearchScope.projectScope(project));
+        /*
+        Output:
+        1. Files -> Classes
+        2. Class -> Methods
+        2. File dependency graph
+         */
 
-        List<String> vfNames = virtualFiles.stream().map(VirtualFile::getName).collect(Collectors.toList());
-        List<PsiFile> psiFiles = virtualFiles.stream().map((VirtualFile vf) -> PsiManager.getInstance(project).findFile(vf)).collect(Collectors.toList());
+        // Initialize fileOwnershipMap & fileOwnershipNameMap
+        virtualFiles.forEach((VirtualFile vf) -> {
+            PsiFile pf = PsiManager.getInstance(project).findFile(vf);
+            pf.accept(new JavaRecursiveElementVisitor() {
+                @Override
+                public void visitClass(PsiClass aClass) {
+                    if (aClass.getName() == null || aClass.getName().length() == 0) return;
 
-        Map<String, Set<PsiClass>> name2Elements = new HashMap<>();
-        psiFiles.forEach((PsiFile pf) -> pf.accept(new JavaRecursiveElementVisitor() {
-            @Override
-            public void visitClass(PsiClass aClass) {
-                super.visitClass(aClass);
-                name2Elements.putIfAbsent(pf.getName(), new HashSet<>());
-                name2Elements.get(pf.getName()).add(aClass);
-            }
+                    super.visitClass(aClass);
+                    fileOwnershipMap.putIfAbsent(pf, new HashSet<>());
+                    fileOwnershipNameMap.putIfAbsent(pf.getName(), new HashSet<>());
+                    fileOwnershipMap.get(pf).add(aClass);
+                    fileOwnershipNameMap.get(pf.getName()).add(aClass.getName());
+                }
+            });
+        });
 
-
-        }));
-
-        Map<PsiClass, Set<PsiMethod>> class2Method = new HashMap<>();
-        for (Set<PsiClass> psiClasses : name2Elements.values()) {
+        // Initialize classOwnershipMap
+        for (Set<PsiClass> psiClasses : fileOwnershipMap.values()) {
             for (PsiClass psiClass : psiClasses) {
-                class2Method.putIfAbsent(psiClass, new HashSet<>(
+                classOwnershipMap.putIfAbsent(psiClass, new HashSet<>(
                         Arrays.asList(psiClass.getMethods())
                 ));
+                classOwnershipNameMap.putIfAbsent(psiClass.getName(), classOwnershipMap.get(psiClass).stream().map(PsiMethod::getName).collect(Collectors.toSet()));
             }
         }
 
-        Map<PsiFile, List<PsiFile>> dependencyGraph = new HashMap<>();
-        Map<String, List<String>> name2name = new HashMap<>();
-        for (Set<PsiMethod> methods : class2Method.values()) {
-            for (PsiMethod method : methods) {
-                dependencyGraph.putIfAbsent(method.getContainingFile(), new ArrayList<>());
-                name2name.putIfAbsent(method.getContainingFile().getName(), new ArrayList<>());
-                ReferencesSearch.search(method).forEach((PsiReference ref) -> {
-                    dependencyGraph.get(method.getContainingFile()).add(ref.getElement().getContainingFile());
-                    name2name.get(method.getContainingFile().getName()).add(ref.getElement().getContainingFile().getName());
+        fileOwnershipMap.forEach((psiFile, psiClasses) -> {
+            fileDependencyGraph.putIfAbsent(psiFile, new HashMap<>());
+            Map<PsiFile, Integer> referenceCountMap = fileDependencyGraph.get(psiFile);
+
+            for (PsiClass psiClass : psiClasses) {
+                ReferencesSearch.search(psiClass).forEach((PsiReference pr) -> {
+                    PsiFile referencerFile = pr.getElement().getContainingFile();
+                    if (referencerFile.getName().endsWith("java"))
+                        referenceCountMap.put(
+                                referencerFile,
+                                referenceCountMap.getOrDefault(referencerFile, 0) + 1
+                        );
                 });
             }
-        }
 
-        String jsonNameGraph = new Gson().toJson(name2name);
-        sendRequest("http://127.0.0.1:3001/graph", jsonNameGraph);
+            fileDependencyNameGraph.putIfAbsent(
+                    psiFile.getName(),
+                    referenceCountMap.entrySet().stream().collect(
+                            Collectors.toMap(e -> e.getKey().getName(), Map.Entry::getValue)
+                    )
+            );
+        });
+
+        String jsonNameGraph = new Gson().toJson(fileDependencyNameGraph);
+        String jsonFileOwnershipMap = new Gson().toJson(fileOwnershipNameMap);
+        String jsonClassOwnershipMap = new Gson().toJson(classOwnershipNameMap);
+
+        sendRequest(
+                DEPENDENCY_ROUTE,
+                new NameValuePair("dependencyGraph", jsonNameGraph),
+                new NameValuePair("fileOwnershipMap", jsonFileOwnershipMap),
+                new NameValuePair("classOwnershipMap", jsonClassOwnershipMap)
+        );
     }
 
-    private void sendRequest(String route, String data) {
-//        HttpURLConnection connection = null;
-//
-//        try {
-//            URL url = new URL(route);
-//            connection = (HttpURLConnection)url.openConnection();
-//
-//            connection.setRequestMethod("POST");
-//            connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-//            connection.setRequestProperty("Content-Length", Integer.toString(data.getBytes().length));
-//            connection.setRequestProperty("Content-Language", "en-US");
-//
-//            DataOutputStream wr = new DataOutputStream(
-//                    connection.getOutputStream()
-//            );
-//            wr.writeBytes("haha");
-//            wr.close();
-//        } catch (Exception e) {
-//
-//        }
+    private void sendRequest(String route, NameValuePair... pairs) {
         HttpClient client = new HttpClient();
         PostMethod method = new PostMethod(route);
         method.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-        method.setRequestBody(data);
+        method.setRequestBody(pairs);
+
         try {
             int statusCode = client.executeMethod(method);
-
         } catch (Exception e) {
-            System.out.println(e.getStackTrace());
+            System.out.println(e.getMessage());
         } finally {
             method.releaseConnection();
         }

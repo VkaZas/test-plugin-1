@@ -1,6 +1,6 @@
 <idea-plugin>
-    <id>com.vkazas.test-plugin-1</id>
-    <name>Vkazas Plugin</name>
+    <id>test-plugin-1</id>
+    <name>CodeBubbles IDEA</name>
     <vendor email="support@yourcompany.com" url="http://www.yourcompany.com">YourCompany</vendor>
 
     <description><![CDATA[
@@ -19,9 +19,9 @@
     </extensions>
 
     <actions>
-        <group id="TestPlugin1.SampleMenu" text="Greeting" description="Greeting Menu">
+        <group id="TestPlugin1.SampleMenu" text="CodeBubble IDEA" description="Greeting Menu">
             <add-to-group group-id="MainMenu" anchor="last"/>
-            <action class="HelloAction" id="TestPlugin1.Textboxes" text="Hello!!!" description="says hello"/>
+            <action class="HelloAction" id="TestPlugin1.Textboxes" text="Diagnose" description="says hello"/>
         </group>
     </actions>
 </idea-plugin>
