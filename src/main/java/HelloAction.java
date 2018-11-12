@@ -1,6 +1,7 @@
 import com.google.gson.Gson;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -8,10 +9,15 @@ import com.intellij.psi.*;
 import com.intellij.psi.search.FilenameIndex;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.searches.ReferencesSearch;
+import com.intellij.util.OpenSourceUtil;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
 import org.apache.commons.httpclient.HttpClient;
 import org.apache.commons.httpclient.NameValuePair;
 import org.apache.commons.httpclient.methods.PostMethod;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -19,12 +25,33 @@ import java.util.stream.Collectors;
 public class HelloAction extends AnAction {
     private static final String DEPENDENCY_ROUTE = "http://127.0.0.1:3001/graph";
     private static final String JAVA_EXT = "java";
+    private final HttpServer server;
+    private Project project;
 
-    public HelloAction() {
+    public HelloAction() throws IOException {
         super("CodeBubble IDEA");
+        server = HttpServer.create(new InetSocketAddress(3002), 0);
+        HelloAction hi = this;
+        server.createContext("/test", (HttpExchange exchange) -> {
+            try {
+                String queryString =  exchange.getRequestURI().getQuery().split("=")[1];
+                ApplicationManager.getApplication().invokeLater(
+                        () -> ApplicationManager.getApplication().runReadAction(
+                                () -> hi.updateView(queryString)
+                        )
+                );
+                exchange.sendResponseHeaders(200,0);
+                exchange.getResponseBody().close();
+                exchange.close();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+        server.start();
     }
 
     public void actionPerformed(AnActionEvent event) {
+        project = ProjectManager.getInstance().getOpenProjects()[0];
         // Mappings from PsiFile to PsiClasses that it owns
         Map<PsiFile, Set<PsiClass>> fileOwnershipMap = new HashMap<>();
         Map<String, Set<String>> fileOwnershipNameMap = new HashMap<>();
@@ -35,8 +62,6 @@ public class HelloAction extends AnAction {
         Map<PsiFile, Map<PsiFile, Integer>> fileDependencyGraph = new HashMap<>();
         Map<String, Map<String, Integer>> fileDependencyNameGraph = new HashMap<>();
 
-        // Get PisProject
-        Project project = ProjectManager.getInstance().getOpenProjects()[0];
         // Filter out VirtualFiles without .java extension postfix
         Collection<VirtualFile> virtualFiles = FilenameIndex.getAllFilesByExt(project, JAVA_EXT, GlobalSearchScope.projectScope(project));
 
@@ -53,13 +78,13 @@ public class HelloAction extends AnAction {
             pf.accept(new JavaRecursiveElementVisitor() {
                 @Override
                 public void visitClass(PsiClass aClass) {
-                    if (aClass.getName() == null || aClass.getName().length() == 0) return;
+                    if (aClass.getQualifiedName() == null || aClass.getQualifiedName().length() == 0) return;
 
                     super.visitClass(aClass);
                     fileOwnershipMap.putIfAbsent(pf, new HashSet<>());
                     fileOwnershipNameMap.putIfAbsent(pf.getName(), new HashSet<>());
                     fileOwnershipMap.get(pf).add(aClass);
-                    fileOwnershipNameMap.get(pf.getName()).add(aClass.getName());
+                    fileOwnershipNameMap.get(pf.getName()).add(aClass.getQualifiedName());
                 }
             });
         });
@@ -67,10 +92,14 @@ public class HelloAction extends AnAction {
         // Initialize classOwnershipMap
         for (Set<PsiClass> psiClasses : fileOwnershipMap.values()) {
             for (PsiClass psiClass : psiClasses) {
-                classOwnershipMap.putIfAbsent(psiClass, new HashSet<>(
-                        Arrays.asList(psiClass.getMethods())
+                classOwnershipMap.putIfAbsent(
+                        psiClass,
+                        new HashSet<>(Arrays.asList(psiClass.getMethods())
                 ));
-                classOwnershipNameMap.putIfAbsent(psiClass.getName(), classOwnershipMap.get(psiClass).stream().map(PsiMethod::getName).collect(Collectors.toSet()));
+                classOwnershipNameMap.putIfAbsent(
+                        psiClass.getQualifiedName(),
+                        classOwnershipMap.get(psiClass).stream().map(PsiMethod::getName).collect(Collectors.toSet())
+                );
             }
         }
 
@@ -97,9 +126,10 @@ public class HelloAction extends AnAction {
             );
         });
 
-        String jsonNameGraph = new Gson().toJson(fileDependencyNameGraph);
-        String jsonFileOwnershipMap = new Gson().toJson(fileOwnershipNameMap);
-        String jsonClassOwnershipMap = new Gson().toJson(classOwnershipNameMap);
+        Gson gson = new Gson();
+        String jsonNameGraph = gson.toJson(fileDependencyNameGraph);
+        String jsonFileOwnershipMap = gson.toJson(fileOwnershipNameMap);
+        String jsonClassOwnershipMap = gson.toJson(classOwnershipNameMap);
 
         sendRequest(
                 DEPENDENCY_ROUTE,
@@ -107,6 +137,17 @@ public class HelloAction extends AnAction {
                 new NameValuePair("fileOwnershipMap", jsonFileOwnershipMap),
                 new NameValuePair("classOwnershipMap", jsonClassOwnershipMap)
         );
+    }
+
+    private void updateView(String names) {
+        PsiClass psiClass = JavaPsiFacade.getInstance(project).findClass(names, GlobalSearchScope.allScope(project));
+        OpenSourceUtil.navigate(psiClass);
+        System.out.println(1);
+    }
+
+    private List<String> processResponse(String stringifyJson) {
+        Gson gson = new Gson();
+        return gson.fromJson(stringifyJson, List.class);
     }
 
     private void sendRequest(String route, NameValuePair... pairs) {
