@@ -5,6 +5,7 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.pom.Navigatable;
 import com.intellij.psi.*;
 import com.intellij.psi.search.FilenameIndex;
 import com.intellij.psi.search.GlobalSearchScope;
@@ -37,7 +38,11 @@ public class HelloAction extends AnAction {
                 String queryString =  exchange.getRequestURI().getQuery().split("=")[1];
                 ApplicationManager.getApplication().invokeLater(
                         () -> ApplicationManager.getApplication().runReadAction(
-                                () -> hi.updateView(queryString)
+                                () -> {
+                                    Gson gson = new Gson();
+                                    String[] queryParams = gson.fromJson(queryString, String[].class);
+                                    hi.updateView(queryParams);
+                                }
                         )
                 );
                 exchange.sendResponseHeaders(200,0);
@@ -139,15 +144,21 @@ public class HelloAction extends AnAction {
         );
     }
 
-    private void updateView(String names) {
-        PsiClass psiClass = JavaPsiFacade.getInstance(project).findClass(names, GlobalSearchScope.allScope(project));
-        OpenSourceUtil.navigate(psiClass);
-        System.out.println(1);
-    }
+    private void updateView(String... names) {
+        if (names == null) return;
 
-    private List<String> processResponse(String stringifyJson) {
-        Gson gson = new Gson();
-        return gson.fromJson(stringifyJson, List.class);
+        String className = names.length > 0 ? names[0] : null;
+        String methodName = names.length > 1 ? names[1] : null;
+        PsiClass targetClass = null;
+        PsiMethod targetMethod = null;
+
+        if (className != null) targetClass = JavaPsiFacade.getInstance(project).findClass(className, GlobalSearchScope.allScope(project));
+
+        if (methodName != null) targetMethod = targetClass.findMethodsByName(methodName, false)[0];
+
+        Navigatable target = targetClass == null ? null : targetMethod == null ? targetClass : targetMethod;
+
+        if (target != null) OpenSourceUtil.navigate(target);
     }
 
     private void sendRequest(String route, NameValuePair... pairs) {
