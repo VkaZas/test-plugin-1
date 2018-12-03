@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 
 
 public class HelloAction extends AnAction {
-    private static final String DEPENDENCY_ROUTE = "http://127.0.0.1:3001/graph";
+    private static final String DEPENDENCY_ROUTE = "http://127.0.0.1:3001/col";
     private static final String JAVA_EXT = "java";
     private final HttpServer server;
     private Project project;
@@ -59,13 +59,15 @@ public class HelloAction extends AnAction {
         project = ProjectManager.getInstance().getOpenProjects()[0];
         // Mappings from PsiFile to PsiClasses that it owns
         Map<PsiFile, Set<PsiClass>> fileOwnershipMap = new HashMap<>();
-        Map<String, Set<String>> fileOwnershipNameMap = new HashMap<>();
+        Map<String, Map<String, String>> fileOwnershipNameMap = new HashMap<>();
         // Mappings from PsiClass to PsiMethods that it owns
         Map<PsiClass, Set<PsiMethod>> classOwnershipMap = new HashMap<>();
-        Map<String, Set<String>> classOwnershipNameMap = new HashMap<>();
+        Map<String, Map<String, String>> classOwnershipNameMap = new HashMap<>();
         // A dependency graph from declarations to references of PsiClasses represented in PsiFiles with invocation statistics
         Map<PsiFile, Map<PsiFile, Integer>> fileDependencyGraph = new HashMap<>();
         Map<String, Map<String, Integer>> fileDependencyNameGraph = new HashMap<>();
+
+        //
 
         // Filter out VirtualFiles without .java extension postfix
         Collection<VirtualFile> virtualFiles = FilenameIndex.getAllFilesByExt(project, JAVA_EXT, GlobalSearchScope.projectScope(project));
@@ -87,9 +89,9 @@ public class HelloAction extends AnAction {
 
                     super.visitClass(aClass);
                     fileOwnershipMap.putIfAbsent(pf, new HashSet<>());
-                    fileOwnershipNameMap.putIfAbsent(pf.getName(), new HashSet<>());
+                    fileOwnershipNameMap.putIfAbsent(pf.getName(), new HashMap<>());
                     fileOwnershipMap.get(pf).add(aClass);
-                    fileOwnershipNameMap.get(pf.getName()).add(aClass.getQualifiedName());
+                    fileOwnershipNameMap.get(pf.getName()).putIfAbsent(aClass.getQualifiedName(), aClass.getText());
                 }
             });
         });
@@ -103,7 +105,8 @@ public class HelloAction extends AnAction {
                 ));
                 classOwnershipNameMap.putIfAbsent(
                         psiClass.getQualifiedName(),
-                        classOwnershipMap.get(psiClass).stream().map(PsiMethod::getName).collect(Collectors.toSet())
+                        classOwnershipMap.get(psiClass).stream().collect(Collectors.toMap(
+                                PsiMethod::getName, PsiMethod::getText))
                 );
             }
         }
