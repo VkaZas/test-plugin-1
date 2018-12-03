@@ -31,7 +31,7 @@ public class HelloAction extends AnAction {
 
     public HelloAction() throws IOException {
         super("CodeBubble IDEA");
-        server = HttpServer.create(new InetSocketAddress(3002), 0);
+        server = HttpServer.create(new InetSocketAddress(3003), 0);
         HelloAction hi = this;
         server.createContext("/test", (HttpExchange exchange) -> {
             try {
