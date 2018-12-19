@@ -12,6 +12,12 @@ repositories {
     mavenCentral()
 }
 
+task setup(type: Exec) {
+    commandLine './setup.bat'
+}
+
+buildPlugin.dependsOn setup
+
 dependencies {
     testCompile group: 'junit', name: 'junit', version: '4.12'
 }

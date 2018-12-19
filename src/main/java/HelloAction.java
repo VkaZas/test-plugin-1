@@ -17,8 +17,11 @@ import org.apache.commons.httpclient.HttpClient;
 import org.apache.commons.httpclient.NameValuePair;
 import org.apache.commons.httpclient.methods.PostMethod;
 
+import java.awt.*;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.URL;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -31,6 +34,7 @@ public class HelloAction extends AnAction {
 
     public HelloAction() throws IOException {
         super("CodeBubble IDEA");
+
         server = HttpServer.create(new InetSocketAddress(3003), 0);
         HelloAction hi = this;
         server.createContext("/test", (HttpExchange exchange) -> {
@@ -40,13 +44,17 @@ public class HelloAction extends AnAction {
                         () -> ApplicationManager.getApplication().runReadAction(
                                 () -> {
                                     Gson gson = new Gson();
-                                    String[] queryParams = gson.fromJson(queryString, String[].class);
+//                                    String[] queryParams = gson.fromJson(queryString, String[].class);
+                                    String[] queryParams = new String[1];
+                                    queryParams[0] = queryString;
                                     hi.updateView(queryParams);
                                 }
                         )
                 );
                 exchange.sendResponseHeaders(200,0);
                 exchange.getResponseBody().close();
+                exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, OPTIONS");
+                exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type,Authorization");
                 exchange.close();
             } catch (Exception e) {
                 e.printStackTrace();
@@ -56,6 +64,16 @@ public class HelloAction extends AnAction {
     }
 
     public void actionPerformed(AnActionEvent event) {
+        Desktop desktop = Desktop.isDesktopSupported() ? Desktop.getDesktop() : null;
+        if (desktop != null && desktop.isSupported(Desktop.Action.BROWSE)) {
+            try {
+                URI url = new URI(DEPENDENCY_ROUTE);
+                desktop.browse(url);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
         project = ProjectManager.getInstance().getOpenProjects()[0];
         // Mappings from PsiFile to PsiClasses that it owns
         Map<PsiFile, Set<PsiClass>> fileOwnershipMap = new HashMap<>();
